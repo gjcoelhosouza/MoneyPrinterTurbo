@@ -59,13 +59,32 @@ class ScriptPresetsTest(unittest.TestCase):
         self.assertIsNone(script_presets.get_preset("does-not-exist"))
         self.assertIsNone(script_presets.apply_preset("does-not-exist"))
 
-    def test_apply_preset_keeps_settings_the_preset_does_not_define(self):
+    def test_apply_preset_fills_every_setting_it_defines(self):
         values = script_presets.apply_preset(
             script_presets.PRESET_CURIOSIDADES_ID,
-            current_script_prompt="manter este requisito",
+            current_script_prompt="requisito antigo",
+            current_system_prompt="prompt antigo",
         )
 
-        self.assertEqual(values["video_script_prompt"], "manter este requisito")
+        preset = script_presets.get_preset(script_presets.PRESET_CURIOSIDADES_ID)
+        self.assertEqual(values["video_script_prompt"], preset.script_prompt)
+        self.assertEqual(values["custom_system_prompt"], preset.system_prompt)
+        self.assertEqual(values["paragraph_number_input"], preset.paragraph_number)
+
+    def test_apply_preset_keeps_settings_the_preset_does_not_define(self):
+        preset = script_presets.ScriptPreset(
+            preset_id="only_prompt",
+            label="Only prompt",
+            description="",
+            system_prompt="Write a short script.",
+            script_prompt="",
+            paragraph_number=2,
+        )
+
+        values = preset.widget_values()
+
+        self.assertEqual(values["custom_system_prompt"], "Write a short script.")
+        self.assertEqual(values["video_script_prompt"], "")
 
 
 if __name__ == "__main__":
