@@ -58,6 +58,7 @@ from app.services import (
     infistar_video,
     jalapeno_video,
     ofox,
+    script_presets,
     subtitle,
     useapi,
     video,
@@ -2717,6 +2718,23 @@ def sync_script_order_concat_mode():
 def reset_script_system_prompt():
     """将高级脚本设置中的系统提示词恢复为当前版本的默认内容。"""
     st.session_state["custom_system_prompt"] = llm.DEFAULT_SCRIPT_SYSTEM_PROMPT
+
+
+def apply_script_preset():
+    """把选中的脚本预设写入高级脚本设置的三个控件。"""
+    preset = script_presets.get_preset(st.session_state.get("script_preset_select", ""))
+    if preset is None:
+        return
+
+    st.session_state["custom_system_prompt"] = preset.system_prompt
+    st.session_state["video_script_prompt"] = preset.script_prompt
+    st.session_state["paragraph_number_input"] = preset.paragraph_number
+    # 预设自带语言时同步脚本语言，避免葡萄牙语预设配着别的语言生成。
+    if preset.video_language:
+        language_options = ["", *support_locales]
+        if preset.video_language in language_options:
+            _set_stable_widget_value("script_language_select", preset.video_language)
+    st.session_state["script_preset_applied"] = preset.preset_id
 
 
 def reset_subtitle_settings():
@@ -6005,6 +6023,40 @@ def _render_script_settings(panel, params):
                     _set_runtime_config(
                         "app", "script_generation_backend", script_generation_backend
                     )
+
+                    preset_options = [""] + [
+                        preset.preset_id for preset in script_presets.list_presets()
+                    ]
+                    preset_labels = {"": tr("No Preset")}
+                    preset_labels.update(
+                        {
+                            preset.preset_id: preset.label
+                            for preset in script_presets.list_presets()
+                        }
+                    )
+                    preset_col, apply_preset_col = st.columns([3, 1])
+                    preset_col.selectbox(
+                        tr("Script Preset"),
+                        options=preset_options,
+                        key="script_preset_select",
+                        format_func=lambda value: preset_labels[value],
+                        help=tr("Script Preset Help"),
+                    )
+                    selected_preset = script_presets.get_preset(
+                        st.session_state.get("script_preset_select", "")
+                    )
+                    if selected_preset:
+                        preset_col.caption(selected_preset.description)
+                    apply_preset_col.button(
+                        tr("Apply Script Preset"),
+                        key="apply_script_preset",
+                        icon=":material/playlist_add_check:",
+                        disabled=selected_preset is None,
+                        on_click=apply_script_preset,
+                        use_container_width=True,
+                    )
+                    if st.session_state.pop("script_preset_applied", None):
+                        st.toast(tr("Script Preset Applied"))
 
                     params.paragraph_number = st.slider(
                         tr("Script Paragraph Number"),
