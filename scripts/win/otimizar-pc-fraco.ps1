@@ -152,11 +152,60 @@ function Stop-BloatProcesses {
 
 function Clear-TempFiles {
     Write-Step 'Limpando arquivos temporarios'
-    $targets = @("$env:TEMP\*", "$env:SystemRoot\Temp\*")
-    foreach ($t in $targets) {
-        if ($DryRun) { Write-Skip "limparia $t"; continue }
-        Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Ok "limpo: $t"
+    # No Windows, Remove-Item manda para a Lixeira e falha em arquivos em uso.
+    # .NET apaga direto e ignora o que estiver travado, que e o comportamento util aqui.
+    $targets = @($env:TEMP, "$env:SystemRoot\Temp")
+    foreach ($dir in $targets) {
+        if (-not (Test-Path $dir)) { continue }
+        if ($DryRun) { Write-Skip "limparia $dir"; continue }
+        $freed = 0
+        foreach ($item in Get-ChildItem -Path $dir -Force -ErrorAction SilentlyContinue) {
+            try {
+                if ($item.PSIsContainer) {
+                    $size = (Get-ChildItem $item.FullName -Recurse -Force -File -ErrorAction SilentlyContinue |
+                             Measure-Object Length -Sum).Sum
+                    [System.IO.Directory]::Delete($item.FullName, $true)
+                } else {
+                    $size = $item.Length
+                    [System.IO.File]::Delete($item.FullName)
+                }
+                $freed += [int64]$size
+            } catch { }  # arquivo em uso: segue em frente
+        }
+        Write-Ok ("limpo: {0} ({1} MB liberados)" -f $dir, [math]::Round($freed / 1MB, 1))
+    }
+}
+
+# Servicos que pesam em PC fraco. SysMain fica de fora de proposito:
+# o prefetch dele ajuda em disco mecanico (HDD).
+$services = @(
+    @{ Name = 'DiagTrack';         Optimized = 'Disabled'; Default = 'Automatic'
+       Desc = 'Telemetria (DiagTrack) desativada' }
+    @{ Name = 'dmwappushservice';  Optimized = 'Disabled'; Default = 'Manual'
+       Desc = 'Push de telemetria (dmwappushservice) desativado' }
+    @{ Name = 'WSearch';           Optimized = 'Disabled'; Default = 'Automatic'
+       Desc = 'Indexacao da Busca desativada (pesada em HDD)' }
+)
+
+function Set-ServiceState {
+    param($Item, $StartupType)
+    $svc = Get-Service -Name $Item.Name -ErrorAction SilentlyContinue
+    if (-not $svc) { Write-Host "    nao existe: $($Item.Name)" -ForegroundColor DarkGray; return }
+    if ($DryRun) {
+        Write-Skip ("{0} -> {1}" -f $Item.Desc, $StartupType)
+        return
+    }
+    try {
+        Set-Service -Name $Item.Name -StartupType $StartupType -ErrorAction Stop
+        if ($StartupType -eq 'Disabled') {
+            Stop-Service -Name $Item.Name -Force -ErrorAction SilentlyContinue
+        } elseif ($svc.Status -ne 'Running') {
+            Start-Service -Name $Item.Name -ErrorAction SilentlyContinue
+        }
+        $now = Get-Service -Name $Item.Name
+        Write-Ok ("{0} ({1})" -f $Item.Desc, $now.Status)
+    } catch {
+        Write-Host "    falhou $($Item.Name): $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
@@ -177,6 +226,7 @@ if (-not (Test-Admin) -and -not $DryRun) {
 if ($Undo) {
     Write-Step 'Revertendo alteracoes'
     foreach ($t in $tweaks) { Set-Tweak -Tweak $t -Value $t.Default }
+    foreach ($s in $services) { Set-ServiceState -Item $s -StartupType $s.Default }
     Restart-Explorer
     Write-Ok 'Valores padrao restaurados. Reinicie o PC para concluir.'
     exit 0
@@ -187,6 +237,9 @@ New-SafetyRestorePoint
 
 Write-Step 'Aplicando ajustes leves'
 foreach ($t in $tweaks) { Set-Tweak -Tweak $t -Value $t.Optimized }
+
+Write-Step 'Ajustando servicos'
+foreach ($s in $services) { Set-ServiceState -Item $s -StartupType $s.Optimized }
 
 Stop-BloatProcesses
 Clear-TempFiles
